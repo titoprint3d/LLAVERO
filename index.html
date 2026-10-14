@@ -11,74 +11,101 @@
           padding: 24px; box-shadow: 0 2px 12px rgba(0,0,0,.08); text-align: center; }
   h1 { font-size: 1.4rem; margin: 0 0 8px; }
   p { color: #444; line-height: 1.4; }
-  button, a.btn { display: block; width: 100%; box-sizing: border-box; padding: 14px;
-          margin-top: 12px; border: 0; border-radius: 12px; font-size: 1rem;
-          font-weight: 600; text-decoration: none; cursor: pointer; }
-  #avisar { background: #1a73e8; color: #fff; }
+  a.btn { display: block; box-sizing: border-box; padding: 14px; margin-top: 12px;
+          border-radius: 12px; font-size: 1rem; font-weight: 600; text-decoration: none; }
   .wa { background: #25d366; color: #fff; }
   .tel { background: #eee; color: #222; }
-  #estado { margin-top: 14px; font-size: .95rem; }
+  #estado { margin-top: 14px; font-size: .95rem; color: #222; }
 </style>
 </head>
 <body>
 <div class="card">
   <h1>🔑 Encontraste unas llaves</h1>
-  <p>¡Gracias por ayudar! Tocá el botón para avisarle al dueño dónde están.
-     Solo se comparte la ubicación del momento.</p>
+  <p>¡Gracias por ayudar! Si tu celular te pide permiso para usar tu ubicación,
+     aceptarlo le avisa al dueño dónde están. Solo se comparte la ubicación de este momento.</p>
 
-  <button id="avisar">📍 Avisar al dueño dónde estoy</button>
-  <div id="estado"></div>
+  <div id="estado">Cargando...</div>
 
   <a class="btn wa" id="wa" href="#">💬 Escribir por WhatsApp</a>
   <a class="btn tel" id="tel" href="#">📞 Llamar al dueño</a>
 </div>
 
 <script>
-  // ==== CONFIGURAR ====
   const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbx92GgVQxPr-t5j9VJhi3CdeYurfeObpIFS7_RneH5x_Mm2xX1ZiwwAdjz2Npi7M6XQAA/exec';
-  const TELEFONO = '5491168303450'; // 54 + 9 + código de área + número, sin 0 ni 15
-  const NOMBRE_DUENO = 'Agustín';
-  // =====================
 
-  const id = new URLSearchParams(location.search).get('id') || 'sin-id';
+  const id = new URLSearchParams(location.search).get('id') || '';
   const estado = document.getElementById('estado');
-  const btn = document.getElementById('avisar');
+  const wa = document.getElementById('wa');
+  const tel = document.getElementById('tel');
+  wa.style.display = 'none';
+  tel.style.display = 'none';
 
-  const msg = encodeURIComponent('Hola ' + NOMBRE_DUENO + ', encontré tu llavero (' + id + ').');
-  document.getElementById('wa').href = 'https://wa.me/' + TELEFONO + '?text=' + msg;
-  document.getElementById('tel').href = 'tel:+' + TELEFONO;
+  let enviadoSinUbic = false;
+  let enviadoConUbic = false;
 
-  btn.addEventListener('click', () => {
-    if (!navigator.geolocation) {
-      estado.textContent = 'Tu navegador no permite ubicación. Usá WhatsApp o llamá.';
-      return;
+  function enviar(pos) {
+    const datos = { id: id };
+    if (pos) {
+      datos.lat = pos.coords.latitude;
+      datos.lng = pos.coords.longitude;
+      datos.acc = pos.coords.accuracy;
     }
-    btn.disabled = true;
-    estado.textContent = 'Obteniendo ubicación...';
+    return fetch(SCRIPT_URL, {
+      method: 'POST',
+      mode: 'no-cors',
+      headers: { 'Content-Type': 'text/plain' },
+      body: JSON.stringify(datos)
+    });
+  }
 
-    navigator.geolocation.getCurrentPosition(async (pos) => {
-      try {
-        await fetch(SCRIPT_URL, {
-          method: 'POST',
-          mode: 'no-cors',
-          headers: { 'Content-Type': 'text/plain' },
-          body: JSON.stringify({
-            id: id,
-            lat: pos.coords.latitude,
-            lng: pos.coords.longitude,
-            acc: pos.coords.accuracy
-          })
-        });
-        estado.textContent = '✅ ¡Listo! Le avisamos al dueño. Muchas gracias.';
-      } catch (e) {
-        estado.textContent = 'No se pudo enviar. Probá con WhatsApp.';
-        btn.disabled = false;
-      }
+  function avisarAlDueno() {
+    estado.textContent = 'Avisando al dueño...';
+
+    function avisarSinUbicacion() {
+      if (enviadoSinUbic || enviadoConUbic) return;
+      enviadoSinUbic = true;
+      enviar(null);
+      estado.textContent = 'Le avisamos al dueño que encontraste sus llaves. ' +
+                           'Podés escribirle o llamarlo con los botones de abajo.';
+    }
+
+    if (!navigator.geolocation) { avisarSinUbicacion(); return; }
+
+    // Si no responde al cartel de ubicación, avisamos igual a los 20 segundos
+    const timer = setTimeout(avisarSinUbicacion, 20000);
+
+    navigator.geolocation.getCurrentPosition(pos => {
+      clearTimeout(timer);
+      enviadoConUbic = true;
+      enviar(pos);
+      estado.textContent = '✅ Le avisamos al dueño dónde están las llaves. ¡Muchas gracias!';
     }, () => {
-      estado.textContent = 'No pudimos obtener la ubicación. Usá WhatsApp o llamá.';
-      btn.disabled = false;
-    }, { enableHighAccuracy: true, timeout: 15000 });
-  });
+      clearTimeout(timer);
+      avisarSinUbicacion();
+    }, { enableHighAccuracy: true, timeout: 30000 });
+  }
+
+  if (!id) {
+    estado.textContent = 'Link inválido.';
+  } else {
+    fetch(SCRIPT_URL + '?id=' + encodeURIComponent(id))
+      .then(r => r.json())
+      .then(d => {
+        if (!d.ok) {
+          estado.textContent = 'Este llavero no está registrado.';
+          return;
+        }
+        const msg = encodeURIComponent('Hola ' + d.nombre + ', encontré tu llavero.');
+        wa.href = 'https://wa.me/' + d.tel + '?text=' + msg;
+        tel.href = 'tel:+' + d.tel;
+        wa.style.display = 'block';
+        tel.style.display = 'block';
+        avisarAlDueno();
+      })
+      .catch(() => {
+        estado.textContent = 'No se pudieron cargar los datos. Probá de nuevo.';
+      });
+  }
 </script>
 </body>
 </html>
